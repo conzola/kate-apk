@@ -9,7 +9,7 @@ android {
     defaultConfig {
         applicationId = "com.conzola.kate"
         minSdk = 26; targetSdk = 35
-        versionCode = 3; versionName = "0.3"
+        versionCode = 4; versionName = "0.4"
     }
     buildFeatures { compose = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }

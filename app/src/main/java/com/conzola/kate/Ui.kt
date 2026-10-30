@@ -26,6 +26,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -139,16 +140,32 @@ fun TopBar(title: String, onBack: () -> Unit) {
 @Composable
 fun SectionTitle(text: String) = Text(text, color = Mute, fontSize = 14.sp, modifier = Modifier.padding(top = 28.dp, bottom = 12.dp))
 
-/** The front panel of the Kate bar, flat and straight-on, over a softly breathing amber glow. */
+/** A soft elliptical amber glow behind the content. Reads [alpha] at draw time, so animating it never recomposes. */
+fun Modifier.amberGlow(alpha: () -> Float, cy: Float = .5f, ry: Float = .55f): Modifier = drawBehind {
+    val c = Offset(size.width / 2f, size.height * cy)
+    val radiusY = size.height * ry
+    val radiusX = size.width * .78f
+    withTransform({ scale(scaleX = radiusX / radiusY, scaleY = 1f, pivot = c) }) {
+        drawCircle(Brush.radialGradient(listOf(Amber.copy(alpha = alpha().coerceIn(0f, 1f)), Color.Transparent), center = c, radius = radiusY),
+            radius = radiusY, center = c)
+    }
+}
+
+/** The front panel of the Kate bar, flat and straight-on. [glow] > 0 adds a breathing amber halo. */
 @Composable
-fun KateFront(modifier: Modifier = Modifier, glow: Float = .2f) {
+fun KateFront(modifier: Modifier = Modifier, glow: Float = 0f, pad: Dp = 22.dp) {
     val t = rememberInfiniteTransition(label = "breath")
     val b by t.animateFloat(.75f, 1.25f, infiniteRepeatable(tween(3400, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "b")
-    Box(modifier.drawBehind {
-        drawRect(Brush.radialGradient(listOf(Amber.copy(alpha = (glow * b).coerceIn(0f, 1f)), Color.Transparent), center, size.width * .62f))
-    }.padding(vertical = 22.dp), contentAlignment = Alignment.Center) {
+    Box(modifier.amberGlow({ glow * b }, ry = 1.1f).padding(vertical = pad), contentAlignment = Alignment.Center) {
         Image(painterResource(R.drawable.kate_front), null, Modifier.fillMaxWidth().aspectRatio(2200f / 420f), contentScale = ContentScale.Fit)
     }
+}
+
+@Composable
+fun StatusDot(active: Boolean) {
+    val t = rememberInfiniteTransition(label = "dot")
+    val a by t.animateFloat(1f, if (active) .3f else 1f, infiniteRepeatable(tween(1100), RepeatMode.Reverse), label = "a")
+    Box(Modifier.size(8.dp).graphicsLayer { alpha = a }.clip(CircleShape).background(if (active) Amber else Mute))
 }
 
 @Composable

@@ -1,17 +1,31 @@
-# Kate for Android
-Version 0.2: onboarding, new home screen, per-app filter, flat front-on image.
+# Kate for Android (0.4)
 
-Open this folder in Android Studio (Ladybug or newer), let Gradle sync, run on a phone (API 26+).
+## Build
+Push this folder to GitHub: Actions -> "Build APK" -> download `Kate-debug-apk`. Uninstall any older Kate first
+(each build is signed with a fresh debug key). Or open it in Android Studio and run.
 
-First run: Setup tile -> enter the PC's IP -> grant mic/notification prompts -> Notifications tile -> allow Kate access
--> Setup -> "Let Kate run in the background" (needed on Xiaomi/MIUI too: set Autostart on and battery to "No restrictions").
+## Server (one-time)
+Kate's bridge needs the `/notify` endpoint so the bar can read phone notifications aloud.
+From the root of your kate repo:
 
-Server: paste server/notify_patch.py into ESP/on-pc/server.py (adapt the queue name).
-NFC tag (work in progress): write one NDEF MIME record, type application/vnd.kate.link,
-payload `kate;bt=AA:BB:CC:DD:EE:FF;host=192.168.1.50`. Tapping it opens Kate and links over Bluetooth.
-ESP32 side: server/esp32_bt_snippet.ino.
+    git apply path/to/notify.patch      # adds POST /notify to ESP/on-pc/server.py
+    # restart the bridge: python ESP\on-pc\server.py
 
-## Get the APK without Android Studio
-Push this folder to a GitHub repo. Actions tab -> "Build APK" -> latest run -> download "Kate-debug-apk" (a zip containing app-debug.apk). Sideload it on the phone.
+Until then the app shows "Server needs the notify update" on the home screen.
+
+## First run
+Onboarding asks for the PC's IP (port 8000 is assumed), then the permissions. Reading notifications is the only
+required one. On Xiaomi also set Autostart on and battery to "No restrictions".
+
+## How it talks to Kate
+- Talk button: POST /talk with 16 kHz PCM, plays the streamed reply, keeps listening when Kate sends X-Continue.
+- Phone notifications: POST /notify, queued by the server like a timer and spoken on the bar's speaker.
+- Timers and reminders stay on the bar. Settings -> "Play on this phone" makes this phone long-poll /announce instead
+  (the bar and the phone would otherwise compete for each announcement, so keep it off unless the bar is unplugged).
+- Reachability is checked with GET /openapi.json, which never consumes an announcement.
+
+## NFC tag (work in progress)
+One NDEF MIME record, type `application/vnd.kate.link`, payload `kate;bt=AA:BB:CC:DD:EE:FF;host=192.168.1.50`.
+Tapping it opens the app and links over Bluetooth. ESP32 side: server/esp32_bt_snippet.ino (relays to /notify).
 
 Fonts: Poppins (SIL Open Font License 1.1), app/src/main/res/font.

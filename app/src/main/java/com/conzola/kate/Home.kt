@@ -9,10 +9,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Settings as SettingsIcon
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -33,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -45,30 +44,50 @@ fun Home(onSettings: () -> Unit, onApps: () -> Unit) {
     val haptic = LocalHapticFeedback.current
     val link by KateState.link.collectAsState()
     val near by KateState.nfcNear.collectAsState()
-    val listening by KateState.listening.collectAsState()
+    val phase by KateState.phase.collectAsState()
+    val message by KateState.message.collectAsState()
+    val outdated by KateState.serverOutdated.collectAsState()
     val sent by KateState.forwarded.collectAsState()
     val log by KateState.log.collectAsState()
     var tick by remember { mutableIntStateOf(0) }
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { tick++ }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { tick++; scope.launch(Dispatchers.IO) { KateLink.refresh() } }
     var fwd by remember { mutableStateOf(KateLink.forward) }
+    val host = remember(tick, link) { KateLink.host }
     val listenerOn = remember(tick) { Perms.listener(ctx) }
     val unrestricted = remember(tick) { Perms.battery(ctx) }
     val muted = remember(tick) { KateLink.blocked.size }
-    val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { if (it) scope.launch { KateAudio.talk() } }
-    val glow by animateFloatAsState(if (listening) .46f else if (near) .38f else .20f, tween(600), label = "glow")
+    val btMac = remember(tick, link) { KateLink.btMac }
+    val busy = phase != Phase.IDLE
+    LaunchedEffect(message) { if (message != null) { delay(3500); KateState.message.value = null } }
+
+    val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> if (ok) scope.launch { KateAudio.talk() } }
+    val talk: () -> Unit = {
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        if (host.isBlank()) onSettings()
+        else if (!Perms.mic(ctx)) askMic.launch(Manifest.permission.RECORD_AUDIO)
+        else { scope.launch { KateAudio.talk() } }
+    }
+
+    val breathe = rememberInfiniteTransition(label = "breath")
+    val b by breathe.animateFloat(.8f, 1.2f, infiniteRepeatable(tween(3400, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "b")
+    val glow by animateFloatAsState(if (busy) .5f else if (near) .4f else .24f, tween(600), label = "glow")
 
     val title = when {
-        listening -> "Listening"
+        phase == Phase.LISTENING -> "Listening"
+        phase == Phase.THINKING -> "Thinking"
+        phase == Phase.SPEAKING -> "Speaking"
         near -> "Kate is right here"
+        host.isBlank() -> "Not set up"
         link == Link.OFFLINE -> "Out of reach"
         else -> "Online"
     }
-    val hint = when {
-        link != Link.OFFLINE -> null
-        KateLink.host.isBlank() -> "Add Kate's address in settings"
-        else -> "Can't reach ${KateLink.host}"
+    val cta: Pair<String, () -> Unit>? = when {
+        host.isBlank() -> "Add Kate's address" to onSettings
+        link == Link.OFFLINE -> "Can't reach $host" to onSettings
+        outdated -> "Server needs the notify update" to onSettings
+        else -> null
     }
-    val linkName = when (link) { Link.WIFI -> "Wi-Fi"; Link.BLUETOOTH -> "Bluetooth"; Link.OFFLINE -> "None" }
+    val linkName = when (link) { Link.WIFI -> "Wi-Fi"; Link.BLUETOOTH -> "Bluetooth"; Link.OFFLINE -> "Offline" }
 
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
         .verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
@@ -84,23 +103,32 @@ fun Home(onSettings: () -> Unit, onApps: () -> Unit) {
         }
         Spacer(Modifier.height(18.dp))
 
-        // Hero
+        // Hero: the glow sits behind everything on the card, so nothing has a visible edge.
         val heroShape = RoundedCornerShape(32.dp)
         Column(Modifier.fillMaxWidth().clip(heroShape)
             .background(Brush.verticalGradient(listOf(Color(0xFF18181B), Color(0xFF0B0B0D))))
+            .amberGlow({ glow * b }, cy = .42f, ry = .5f)
             .border(1.dp, Brush.verticalGradient(listOf(Amber.copy(alpha = .38f), Line, Line)), heroShape)
             .padding(horizontal = 18.dp, vertical = 18.dp)) {
-            Row(Modifier.clip(CircleShape).background(Color(0x33000000)).border(1.dp, Line, CircleShape)
+            Row(Modifier.clip(CircleShape).background(Color(0x55000000)).border(1.dp, Line, CircleShape)
                 .padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(8.dp).clip(CircleShape).background(if (link == Link.OFFLINE) Mute else Amber))
+                StatusDot(link != Link.OFFLINE || busy)
                 Spacer(Modifier.width(9.dp))
                 Text(title, fontSize = 14.sp, fontWeight = FontWeight.Medium)
             }
-            KateFront(Modifier.fillMaxWidth().padding(vertical = 6.dp), glow)
-            if (hint != null) Text(hint, color = Mute, fontSize = 13.sp, modifier = Modifier.padding(bottom = 10.dp, start = 4.dp))
+            KateFront(Modifier.fillMaxWidth().padding(vertical = 8.dp), pad = 14.dp)
+            if (cta != null) {
+                val (label, go) = cta
+                Row(Modifier.padding(bottom = 14.dp).pressable(true, go).clip(CircleShape)
+                    .background(Amber.copy(alpha = .12f)).border(1.dp, Amber.copy(alpha = .4f), CircleShape)
+                    .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(label, color = Amber, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = Amber, modifier = Modifier.size(18.dp))
+                }
+            }
             Box(Modifier.fillMaxWidth().height(1.dp).background(Line))
             Row(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Stat(linkName, "Connection", Modifier.weight(1f))
+                Stat(linkName, "Connection", Modifier.weight(1f), if (link == Link.OFFLINE) Mute else Ink)
                 Box(Modifier.width(1.dp).height(30.dp).background(Line))
                 Stat("$sent", "Read aloud", Modifier.weight(1f))
                 Box(Modifier.width(1.dp).height(30.dp).background(Line))
@@ -111,31 +139,36 @@ fun Home(onSettings: () -> Unit, onApps: () -> Unit) {
         // Talk
         Spacer(Modifier.height(16.dp))
         Row(Modifier.fillMaxWidth().height(68.dp)
-            .then(if (!listening) Modifier.shadow(20.dp, CircleShape, ambientColor = Amber, spotColor = Amber) else Modifier)
-            .pressable(!listening) {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                if (!Perms.mic(ctx)) askMic.launch(Manifest.permission.RECORD_AUDIO) else scope.launch { KateAudio.talk() }
-            }
+            .then(if (!busy) Modifier.shadow(20.dp, CircleShape, ambientColor = Amber, spotColor = Amber) else Modifier)
+            .pressable(!busy, talk)
             .clip(CircleShape)
-            .background(if (listening) Brush.horizontalGradient(listOf(Panel, Panel)) else Brush.horizontalGradient(listOf(Amber, AmberHi)))
-            .border(1.dp, if (listening) Amber else Color.Transparent, CircleShape),
+            .background(if (busy) Brush.horizontalGradient(listOf(Panel, Panel)) else Brush.horizontalGradient(listOf(Amber, AmberHi)))
+            .border(1.dp, if (busy) Amber else Color.Transparent, CircleShape),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-            Waveform(listening, if (listening) Amber else Bg)
-            Spacer(Modifier.width(14.dp))
-            Text(if (listening) "Listening…" else "Talk to Kate", fontSize = 17.sp, fontWeight = FontWeight.Medium, color = if (listening) Ink else Bg)
+            if (message == null) { Waveform(busy, if (busy) Amber else Bg); Spacer(Modifier.width(14.dp)) }
+            Text(message ?: when (phase) {
+                Phase.LISTENING -> "Listening…"
+                Phase.THINKING -> "Thinking…"
+                Phase.SPEAKING -> "Speaking…"
+                Phase.IDLE -> "Talk to Kate"
+            }, fontSize = 17.sp, fontWeight = FontWeight.Medium, color = if (busy) Ink else Bg)
         }
 
         // Quick controls
         Spacer(Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Tile(Icons.Default.Notifications, "Read aloud", fwd && listenerOn, Modifier.weight(1f)) {
+            Tile(Icons.Default.Notifications, "Alerts",
+                if (!listenerOn) "Allow access" else if (fwd) "Read aloud" else "Paused", fwd && listenerOn, Modifier.weight(1f)) {
                 if (!listenerOn) Perms.openListener(ctx) else { fwd = !fwd; KateLink.forward = fwd }
             }
-            Tile(Icons.Default.Menu, "Apps", false, Modifier.weight(1f)) { onApps() }
-            Tile(Icons.Default.Share, "Bluetooth", link == Link.BLUETOOTH, Modifier.weight(1f)) {
-                if (KateLink.btMac.isBlank()) onSettings() else scope.launch(Dispatchers.IO) { KateLink.connectBluetooth() }
+            Tile(KateIcons.Grid, "Apps", if (muted == 0) "All on" else "$muted muted", false, Modifier.weight(1f)) { onApps() }
+            Tile(KateIcons.Bluetooth, "Bluetooth",
+                if (link == Link.BLUETOOTH) "Linked" else if (btMac.isBlank()) "Set up" else "Connect", link == Link.BLUETOOTH, Modifier.weight(1f)) {
+                if (btMac.isBlank()) onSettings() else scope.launch(Dispatchers.IO) { KateLink.connectBluetooth() }
             }
-            Tile(Icons.Default.Info, "Always on", unrestricted, Modifier.weight(1f)) { if (!unrestricted) Perms.requestBattery(ctx) }
+            Tile(KateIcons.Bolt, "Background", if (unrestricted) "Always on" else "Allow", unrestricted, Modifier.weight(1f)) {
+                if (!unrestricted) Perms.requestBattery(ctx)
+            }
         }
 
         // Recent
@@ -170,22 +203,24 @@ fun Home(onSettings: () -> Unit, onApps: () -> Unit) {
 }
 
 @Composable
-private fun Stat(value: String, label: String, modifier: Modifier) {
+private fun Stat(value: String, label: String, modifier: Modifier, valueColor: Color = Ink) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, fontSize = 20.sp, fontWeight = FontWeight.Light, maxLines = 1)
+        Text(value, fontSize = 20.sp, fontWeight = FontWeight.Light, maxLines = 1, color = valueColor)
         Text(label, color = Mute, fontSize = 12.sp)
     }
 }
 
 @Composable
-private fun Tile(icon: ImageVector, label: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun Tile(icon: ImageVector, label: String, sub: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(22.dp)
-    Column(modifier.aspectRatio(.92f).pressable(true, onClick).clip(shape)
+    Column(modifier.aspectRatio(.8f).pressable(true, onClick).clip(shape)
         .background(if (on) Amber.copy(alpha = .14f) else Panel)
         .border(1.dp, if (on) Amber.copy(alpha = .55f) else Line, shape),
         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Icon(icon, null, tint = if (on) Amber else Mute, modifier = Modifier.size(24.dp))
-        Spacer(Modifier.height(9.dp))
-        Text(label, fontSize = 11.sp, color = if (on) Ink else Mute, maxLines = 1)
+        Spacer(Modifier.height(10.dp))
+        Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = if (on) Ink else Mute, maxLines = 1)
+        Text(sub, fontSize = 10.sp, color = if (on) Amber else Mute, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 4.dp))
     }
 }

@@ -23,7 +23,7 @@ class KateService : Service() {
         if (!started) {
             started = true
             scope.launch { while (isActive) { KateLink.refresh(); delay(10_000) } }
-            scope.launch { while (isActive) { if (KateState.link.value == Link.WIFI) KateLink.pollAnnounce() else delay(5000) } }
+            scope.launch { while (isActive) { if (KateLink.playHere && KateState.link.value == Link.WIFI) KateLink.pollAnnounce() else delay(5000) } }
             scope.launch { KateState.link.collect { nm.notify(1, build()) } }
         }
         return START_STICKY

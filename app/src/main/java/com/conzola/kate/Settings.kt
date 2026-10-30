@@ -67,6 +67,8 @@ fun SettingsScreen(onBack: () -> Unit, onApps: () -> Unit, onRerun: () -> Unit) 
     var mac by remember { mutableStateOf(KateLink.btMac) }
     var fwd by remember { mutableStateOf(KateLink.forward) }
     var state by remember { mutableIntStateOf(0) }
+    var playHere by remember { mutableStateOf(KateLink.playHere) }
+    val outdated by KateState.serverOutdated.collectAsState()
     val scope = rememberCoroutineScope()
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         TopBar("Settings", onBack)
@@ -84,6 +86,9 @@ fun SettingsScreen(onBack: () -> Unit, onApps: () -> Unit, onRerun: () -> Unit) 
             3 -> Text("No answer from that address.", color = Mute, fontSize = 14.sp, modifier = Modifier.padding(top = 10.dp))
         }
 
+        if (outdated) Text("Kate's server doesn't know /notify yet. Apply server/notify.patch to ESP/on-pc/server.py and restart Kate.",
+            color = Amber, fontSize = 13.sp, lineHeight = 19.sp, modifier = Modifier.padding(top = 12.dp))
+
         SectionTitle("Notifications")
         Column(Modifier.fillMaxWidth().card()) {
             Row(Modifier.fillMaxWidth().clickable { fwd = !fwd; KateLink.forward = fwd }.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -97,12 +102,19 @@ fun SettingsScreen(onBack: () -> Unit, onApps: () -> Unit, onRerun: () -> Unit) 
             }
         }
 
+        SectionTitle("Timers and reminders")
+        Row(Modifier.fillMaxWidth().pressable(true) { playHere = !playHere; KateLink.playHere = playHere }.card().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) { Text("Play on this phone", fontSize = 16.sp); Text("Off keeps them on Kate's speaker", color = Mute, fontSize = 13.sp) }
+            Switch(playHere, null, colors = kateSwitch())
+        }
+
         SectionTitle("Access")
         PermissionsList()
 
         SectionTitle("Setup")
         Row(Modifier.fillMaxWidth().pressable(true, onRerun).card().padding(16.dp)) { Text("Run setup again", fontSize = 16.sp) }
-        Text("Kate for Android 0.3", color = Mute, fontSize = 13.sp, modifier = Modifier.padding(vertical = 24.dp))
+        Text("Kate for Android 0.4", color = Mute, fontSize = 13.sp, modifier = Modifier.padding(vertical = 24.dp))
     }
 }
 

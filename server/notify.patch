@@ -1,0 +1,70 @@
+diff --git a/ESP/on-pc/server.py b/ESP/on-pc/server.py
+index 221b862..4434ab8 100644
+--- a/ESP/on-pc/server.py
++++ b/ESP/on-pc/server.py
+@@ -25,6 +25,10 @@ What the ESP32 does
+                   audio, so nothing is polled. If nothing happens within `wait` seconds it answers
+                   204 (a heartbeat: "the server is alive") and the ESP opens a new one.
+ 
++  POST /notify    {"app": "...", "title": "...", "text": "..."}  a phone notification (sent by the Android app,
++                  or relayed by the ESP32 when the phone is linked over Bluetooth). Kate reads it out through the
++                  same announce queue as timers, so it plays on the bar's speaker. Answers 204.
++
+ Every reply (also the empty 204 ones) carries "X-Volume: 0..100", the speaker volume
+ the user asked for ("louder", "set the volume to 30"...). The ESP applies it before playing.
+ A reply with audio also carries "X-Latency", the same timing line that is printed here,
+@@ -46,6 +50,7 @@ import numpy as np
+ import soundfile as sf
+ from fastapi import FastAPI, Request, Response
+ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
++from pydantic import BaseModel
+ from starlette.concurrency import run_in_threadpool
+ 
+ ROOT = Path(__file__).resolve().parents[2]  # .../kate, where ASR/, LLM/ and TTS/ live
+@@ -71,6 +76,8 @@ SAVE_DEBUG_WAV = os.getenv("KATE_SAVE_DEBUG_WAV", "0").strip().lower() in {"1",
+ if SAVE_RECORDINGS:
+     RECORDINGS_DIR.mkdir(exist_ok=True)
+ LOG_FILE = ROOT / "conversation_log.txt"
++NOTIFY_MAX_QUEUE = 5             # phone notifications waiting to be read out; more than this are dropped
++NOTIFY_MAX_CHARS = 220           # longest sentence Kate will read for one notification
+ 
+ # same phrases as main.py
+ RESET_PHRASES = ("forget everything", "forget our conversation",
+@@ -335,6 +342,37 @@ async def announce(request: Request, wait: float = 0):
+                              headers=reply_headers())
+ 
+ 
++class PhoneNotice(BaseModel):
++    app: str = ""
++    title: str = ""
++    text: str = ""
++
++
++_URL_RE = re.compile(r"https?://\S+")
++
++
++def notice_sentence(n: PhoneNotice) -> str:
++    """'WhatsApp. Anna. Are we still on for tonight?' - one speakable line, links shortened, length capped."""
++    parts = []
++    for raw in (n.app, n.title, n.text):
++        part = " ".join(_URL_RE.sub("a link", raw or "").split())
++        if part:
++            parts.append(part if part[-1] in ".!?" else part + ".")
++    return " ".join(parts)[:NOTIFY_MAX_CHARS]
++
++
++@app.post("/notify")
++async def notify(notice: PhoneNotice):
++    """A phone notification: queue it for the next announce so the bar reads it out."""
++    sentence = notice_sentence(notice)
++    if not sentence or _announcements.qsize() >= NOTIFY_MAX_QUEUE:
++        return Response(status_code=204)
++    print(f"Phone notification: {sentence!r}")
++    log_line("Phone", sentence)
++    _announcements.put((sentence, False))     # no chime: that is for timers and alarms
++    return Response(status_code=204)
++
++
+ _NAME_RE = re.compile(r"^prompt_\d{8}_\d{6}\.wav$")
+ 
+ 
